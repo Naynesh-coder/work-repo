@@ -3,7 +3,7 @@
 A responsive interview preparation dashboard built with plain HTML, CSS and vanilla JavaScript. It has no framework, no npm and no build step. Data is saved in your browser's LocalStorage.
 
 ## Features
-
+-User Authentication & Profiles: Secure local signup and login system with user session management, profile avatars, and multi-account data isolation.
 - Dashboard with total questions, completed DSA problems, completed Git/Technical questions and machine-coding status
 - Add, edit and delete questions, with form validation and a delete confirmation dialog
 - Categories (DSA, Git, Technical), difficulties (Easy, Medium, Hard) and statuses (Pending, In Progress, Completed)

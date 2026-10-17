@@ -7,6 +7,27 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <section class="auth-view" id="authView" aria-label="Authentication">
+  <div class="auth-card card">
+    <div class="brand auth-brand"><span class="logo" data-icon="layers"></span><strong>InterviewPrep Pro</strong></div>
+    <div class="segmented auth-tabs" role="group" aria-label="Login or sign up">
+      <button type="button" id="tabLogin" class="active">Log in</button>
+      <button type="button" id="tabSignup">Sign up</button>
+    </div>
+    <form id="authForm" novalidate>
+      <div id="nameField" hidden>
+        <label for="a-name" class="label">Name</label>
+        <input id="a-name" type="text" autocomplete="name"><p class="error" id="err-a-name"></p>
+      </div>
+      <label for="a-email" class="label">Email</label>
+      <input id="a-email" type="email" autocomplete="email"><p class="error" id="err-a-email"></p>
+      <label for="a-password" class="label">Password</label>
+      <input id="a-password" type="password" autocomplete="current-password"><p class="error" id="err-a-password"></p>
+      <p class="error" id="authError" role="alert"></p>
+      <button type="submit" class="btn primary block" id="authSubmit">Log in</button>
+    </form>
+  </div>
+</section>
   <div class="overlay" id="overlay"></div>
 
   <aside class="sidebar" id="sidebar" aria-label="Sidebar">
@@ -21,14 +42,15 @@
       <button class="nav-link" data-page="progress"><span data-icon="chart"></span>Weekly Progress</button>
       <button class="nav-link" data-page="settings"><span data-icon="gear"></span>Settings</button>
     </nav>
-    <div class="profile">
-      <div class="avatar">S</div>
-      <div><p>Student</p><small>Interview prep</small></div>
-    </div>
-  </aside>
+  <div class="profile">
+  <div class="avatar" id="userAvatar">S</div>
+  <div class="profile-text"><p id="userName">Student</p><small id="userEmail"></small></div>
+  <button class="icon-btn small" id="logoutBtn" aria-label="Log out" data-icon="logout" data-size="16"></button>
+ </div>
 
   <div class="content">
     <header class="topbar">
+      <div class="avatar small" id="topAvatar" aria-hidden="true">S</div>
       <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open menu" data-icon="menu"></button>
       <h1 id="pageTitle">Dashboard</h1>
       <div class="search">
@@ -154,6 +176,11 @@
       <!-- Settings -->
       <section class="page" id="page-settings">
         <article class="card pad narrow">
+          <article class="card pad narrow">
+          <h2 class="card-title">Account</h2>
+          <p class="muted">Signed in as <strong id="settingsEmail"></strong></p>
+        <div class="actions"><button class="btn secondary" id="logoutBtn2">Log out</button></div>
+      </article>
           <h2 class="card-title">Preferences</h2>
           <label for="targetInput" class="label">Weekly question target</label>
           <input id="targetInput" type="number" min="1" max="200">

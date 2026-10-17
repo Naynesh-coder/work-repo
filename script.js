@@ -1,5 +1,5 @@
 /* ---------- Constants ---------- */
-const STORAGE_KEYS = { questions: 'ipt_questions', settings: 'ipt_settings', machine: 'ipt_machine' };
+const STORAGE_KEYS = { saveQuestions: 'ipt_questions', saveSettings: 'ipt_settings', saveMachine: 'ipt_machine' };
 const CATEGORIES = ['DSA', 'Git', 'Technical'];
 const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 const STATUSES = ['Pending', 'In Progress', 'Completed'];
@@ -8,6 +8,7 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const PAGE_TITLES = { dashboard: 'Dashboard', questions: 'Question Tracker', progress: 'Weekly Progress', settings: 'Settings' };
 
 const ICONS = {
+  logout: '<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4M16 17l5-5-5-5M21 12H9"/>',
   dash: '<rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/>',
   list: '<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
   chart: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
@@ -42,6 +43,8 @@ const DEMO_QUESTIONS = [
 
 /* ---------- State ---------- */
 const state = {
+  user: null,
+  authMode: 'login',
   questions: [],
   settings: { target: 20, theme: 'light' },
   machine: { status: 'Not Started', notes: '', updatedAt: null },
@@ -81,6 +84,7 @@ function fillSelect(select, options, placeholder) {
 }
 
 /* ---------- LocalStorage ---------- */
+
 function readStorage(key, fallback) {
   try {
     const raw = localStorage.getItem(key);
@@ -102,22 +106,35 @@ function isValidQuestion(q) {
   return q && typeof q === 'object' && typeof q.id === 'string' && typeof q.title === 'string' && q.title.trim() !== '' &&
     CATEGORIES.includes(q.category) && DIFFICULTIES.includes(q.difficulty) && STATUSES.includes(q.status);
 }
-function loadState() {
-  const questions = readStorage(STORAGE_KEYS.questions, []);
-  state.questions = Array.isArray(questions) ? questions.filter(isValidQuestion) : [];
+function userKey(name) { return state.user ? STORAGE_KEYS[name] + '_' + state.user.id : null; }
 
-  const settings = readStorage(STORAGE_KEYS.settings, {}) || {};
+function resetStateToDefaults() {
+  state.questions = [];
+  state.settings = { target: 20, theme: state.settings.theme };
+  state.machine = { status: 'Not Started', notes: '', updatedAt: null };
+  state.filters = { category: 'All', difficulty: 'All', status: 'All' };
+  state.query = ''; state.editingId = null; state.confirmAction = null;
+  $('searchInput').value = '';
+}
+
+function loadState() {
+  resetStateToDefaults();
+  if (!state.user) return;
+  const questions = readStorage(userKey('questions'), []);
+  state.questions = Array.isArray(questions) ? questions.filter(isValidQuestion) : [];
+  const settings = readStorage(userKey('settings'), {}) || {};
   state.settings.target = clamp(parseInt(settings.target, 10) || 20, 1, 200);
   state.settings.theme = settings.theme === 'dark' ? 'dark' : 'light';
-
-  const machine = readStorage(STORAGE_KEYS.machine, {}) || {};
+  const machine = readStorage(userKey('machine'), {}) || {};
   state.machine.status = MACHINE_STATUSES.includes(machine.status) ? machine.status : 'Not Started';
   state.machine.notes = typeof machine.notes === 'string' ? machine.notes : '';
   state.machine.updatedAt = typeof machine.updatedAt === 'number' ? machine.updatedAt : null;
 }
-const saveQuestions = () => writeStorage(STORAGE_KEYS.questions, state.questions);
-const saveSettings = () => writeStorage(STORAGE_KEYS.settings, state.settings);
-const saveMachine = () => writeStorage(STORAGE_KEYS.machine, state.machine);
+
+function persist(name, value) { return state.user ? writeStorage(userKey(name), value) : false; }
+const saveQuestions = () => persist('questions', state.questions);
+const saveSettings = () => persist('settings', state.settings);
+const saveMachine = () => persist('machine', state.machine);
 
 /* ---------- Statistics ---------- */
 function getWeekStart() {
@@ -280,6 +297,7 @@ function renderAll() {
 function openSidebar() { $('sidebar').classList.add('open'); $('overlay').classList.add('show'); }
 function closeSidebar() { $('sidebar').classList.remove('open'); $('overlay').classList.remove('show'); }
 function showPage(page) {
+  if (!state.user) return;
   state.page = page;
   document.querySelectorAll('.page').forEach((el) => el.classList.toggle('active', el.id === 'page-' + page));
   document.querySelectorAll('.nav-link').forEach((btn) => {
@@ -301,6 +319,7 @@ function toggleTheme() {
   state.settings.theme = state.settings.theme === 'dark' ? 'light' : 'dark';
   saveSettings();
   applyTheme();
+  writeStorage('ipt_last_theme', state.settings.theme);
 }
 
 /* ---------- Toasts ---------- */
@@ -441,7 +460,162 @@ function updateTarget(value) {
   renderAll();
 }
 
+/* ---------- Auth service (mock, localStorage) ---------- */
+const AUTH_KEYS = { users: 'ipt_users', session: 'ipt_session' };
+
+async function hashPassword(password, salt) {
+  if (!window.crypto || !crypto.subtle) return btoa(unescape(encodeURIComponent(salt + password)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + password));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Moves data saved before auth existed into the first account created
+function migrateLegacyData(userId) {
+  ['questions', 'settings', 'machine'].forEach((name) => {
+    try {
+      const key = STORAGE_KEYS[name];
+      const value = localStorage.getItem(key);
+      if (value !== null) { localStorage.setItem(key + '_' + userId, value); localStorage.removeItem(key); }
+    } catch (error) { /* ignore */ }
+  });
+}
+
+const MockAuth = {
+  listeners: [],
+  readUsers() {
+    const users = readStorage(AUTH_KEYS.users, []);
+    return Array.isArray(users) ? users.filter((u) => u && u.id && u.email && u.hash && u.salt) : [];
+  },
+  currentUser() {
+    const session = readStorage(AUTH_KEYS.session, null);
+    const user = session && this.readUsers().find((u) => u.id === session.userId);
+    return user ? { id: user.id, name: user.name, email: user.email } : null;
+  },
+  notify() { const user = this.currentUser(); this.listeners.forEach((cb) => cb(user)); },
+  onAuthChange(callback) {
+    this.listeners.push(callback);
+    callback(this.currentUser());
+    // keeps other tabs in sync when someone logs in or out
+    window.addEventListener('storage', (e) => { if (e.key === AUTH_KEYS.session) callback(this.currentUser()); });
+  },
+  async signup({ name, email, password }) {
+    const users = this.readUsers();
+    const cleanEmail = email.trim().toLowerCase();
+    if (users.some((u) => u.email === cleanEmail)) throw new Error('An account with this email already exists.');
+    const salt = generateId();
+    const user = { id: 'u_' + generateId(), name: name.trim(), email: cleanEmail, salt, hash: await hashPassword(password, salt), createdAt: Date.now() };
+    if (!users.length) migrateLegacyData(user.id);
+    users.push(user);
+    if (!writeStorage(AUTH_KEYS.users, users)) throw new Error('Could not save your account.');
+    writeStorage(AUTH_KEYS.session, { userId: user.id });
+    this.notify();
+  },
+  async login({ email, password }) {
+    const user = this.readUsers().find((u) => u.email === email.trim().toLowerCase());
+    if (!user || (await hashPassword(password, user.salt)) !== user.hash) throw new Error('Invalid email or password.');
+    writeStorage(AUTH_KEYS.session, { userId: user.id });
+    this.notify();
+  },
+  async logout() {
+    try { localStorage.removeItem(AUTH_KEYS.session); } catch (error) { /* ignore */ }
+    this.notify();
+  }
+};
+
+const AuthService = MockAuth; // swap this line for FirebaseAuth later
+
+/* ---------- Auth UI and session ---------- */
+function clearAuthErrors() {
+  ['a-name', 'a-email', 'a-password'].forEach((id) => { $('err-' + id).textContent = ''; $(id).setAttribute('aria-invalid', 'false'); });
+  $('authError').textContent = '';
+}
+function setAuthMode(mode) {
+  state.authMode = mode;
+  const signup = mode === 'signup';
+  $('tabLogin').classList.toggle('active', !signup);
+  $('tabSignup').classList.toggle('active', signup);
+  $('nameField').hidden = !signup;
+  $('authSubmit').textContent = signup ? 'Create account' : 'Log in';
+  $('a-password').autocomplete = signup ? 'new-password' : 'current-password';
+  clearAuthErrors();
+}
+function validateAuth(mode, data) {
+  const errors = {};
+  if (mode === 'signup' && data.name.trim().length < 2) errors['a-name'] = 'Please enter your name.';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) errors['a-email'] = 'Enter a valid email address.';
+  if (mode === 'signup' && data.password.length < 8) errors['a-password'] = 'Password must be at least 8 characters.';
+  if (mode === 'login' && !data.password) errors['a-password'] = 'Password is required.';
+  return errors;
+}
+
+async function handleAuthSubmit(event) {
+  event.preventDefault();
+  clearAuthErrors();
+  const mode = state.authMode;
+  const data = { name: $('a-name').value, email: $('a-email').value, password: $('a-password').value };
+  const errors = validateAuth(mode, data);
+  Object.keys(errors).forEach((id) => { $('err-' + id).textContent = errors[id]; $(id).setAttribute('aria-invalid', 'true'); });
+  if (Object.keys(errors).length) return;
+  $('authSubmit').disabled = true;
+  try {
+    if (mode === 'signup') { await AuthService.signup(data); showToast('Account created. Welcome!'); }
+    else await AuthService.login(data);
+  } catch (error) {
+    $('authError').textContent = error.message || 'Something went wrong. Please try again.';
+  } finally {
+    $('authSubmit').disabled = false;
+  }
+}
+async function handleLogout() {
+  await AuthService.logout();
+  showToast('You have been logged out');
+}
+
+function renderUser() {
+  const user = state.user;
+  if (!user) return;
+  const display = user.name || user.email.split('@')[0];
+  const initial = display.trim().charAt(0).toUpperCase() || '?';
+  $('userAvatar').textContent = initial;
+  $('topAvatar').textContent = initial;
+  $('userName').textContent = display;
+  $('userEmail').textContent = user.email;
+  $('settingsEmail').textContent = user.email;
+}
+
+// Called by AuthService whenever the signed-in user changes
+function startSession(user) {
+  if (state.user && state.user.id === user.id) return;
+  state.user = user;
+  loadState();                       // loads THIS user's data only
+  $('authForm').reset();
+  clearAuthErrors();
+  applyTheme();
+  renderGreeting();
+  renderUser();
+  document.body.classList.add('authed');
+  showPage('dashboard');
+  renderAll();
+}
+function endSession() {
+  state.user = null;
+  resetStateToDefaults();            // clears in-memory data of the previous user
+  $('formModal').close();
+  $('confirmModal').close();
+  closeSidebar();
+  document.body.classList.remove('authed');
+  setAuthMode('login');
+  applyTheme();
+}
+
 /* ---------- Event listeners ---------- */
+function setupAuthEvents() {
+  $('authForm').addEventListener('submit', handleAuthSubmit);
+  $('tabLogin').addEventListener('click', () => setAuthMode('login'));
+  $('tabSignup').addEventListener('click', () => setAuthMode('signup'));
+  $('logoutBtn').addEventListener('click', handleLogout);
+  $('logoutBtn2').addEventListener('click', handleLogout);
+}
 function setupEvents() {
   $('menuBtn').addEventListener('click', openSidebar);
   $('closeMenuBtn').addEventListener('click', closeSidebar);
@@ -521,7 +695,6 @@ function setupEvents() {
 
 /* ---------- Init ---------- */
 function init() {
-  loadState();
   hydrateIcons();
   fillSelect($('f-category'), CATEGORIES, 'Select…');
   fillSelect($('f-difficulty'), DIFFICULTIES, 'Select…');
@@ -530,10 +703,10 @@ function init() {
   fillSelect($('filterDifficulty'), DIFFICULTIES, 'Difficulty: All');
   fillSelect($('filterStatus'), STATUSES, 'Status: All');
   ['filterCategory', 'filterDifficulty', 'filterStatus'].forEach((id) => { $(id).options[0].value = 'All'; });
+  state.settings.theme = readStorage('ipt_last_theme', 'light') === 'dark' ? 'dark' : 'light';
   applyTheme();
-  renderGreeting();
   setupEvents();
-  renderAll();
+  setupAuthEvents();
+  setAuthMode('login');
+  AuthService.onAuthChange((user) => (user ? startSession(user) : endSession()));
 }
-
-document.addEventListener('DOMContentLoaded', init);
