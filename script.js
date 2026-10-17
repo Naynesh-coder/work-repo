@@ -1,5 +1,5 @@
 /* ---------- Constants ---------- */
-const STORAGE_KEYS = { saveQuestions: 'ipt_questions', saveSettings: 'ipt_settings', saveMachine: 'ipt_machine' };
+const STORAGE_KEYS = { questions: 'ipt_questions', settings: 'ipt_settings', machine: 'ipt_machine' };
 const CATEGORIES = ['DSA', 'Git', 'Technical'];
 const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 const STATUSES = ['Pending', 'In Progress', 'Completed'];
@@ -83,7 +83,8 @@ function fillSelect(select, options, placeholder) {
     options.map((o) => '<option value="' + o + '">' + o + '</option>').join('');
 }
 
-/* ---------- LocalStorage ---------- */
+/* ---------- LocalStorage & Auth Core Functions ---------- */
+const AUTH_KEYS = { users: 'ipt_users', session: 'ipt_session' };
 
 function readStorage(key, fallback) {
   try {
@@ -93,6 +94,7 @@ function readStorage(key, fallback) {
     return fallback;
   }
 }
+
 function writeStorage(key, value) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -102,6 +104,107 @@ function writeStorage(key, value) {
     return false;
   }
 }
+
+async function hashPassword(password, salt) {
+  if (!window.crypto || !crypto.subtle) return btoa(unescape(encodeURIComponent(salt + password)));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + password));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function readUsers() {
+  const users = readStorage(AUTH_KEYS.users, []);
+  return Array.isArray(users) ? users.filter((u) => u && u.id && u.email && u.hash && u.salt) : [];
+}
+
+function getCurrentUser() {
+  const session = readStorage(AUTH_KEYS.session, null);
+  if (!session || !session.userId) return null;
+  const users = readUsers();
+  const user = users.find((u) => u.id === session.userId);
+  return user ? { id: user.id, name: user.name, email: user.email } : null;
+}
+
+function isAuthenticated() {
+  return getCurrentUser() !== null;
+}
+
+function validateSignupForm(name, email, password) {
+  const errors = {};
+  if (!name || name.trim().length < 2) {
+    errors['a-name'] = 'Please enter your name.';
+  }
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    errors['a-email'] = 'Enter a valid email address.';
+  }
+  if (!password || password.trim().length < 8) {
+    errors['a-password'] = 'Password must be at least 8 characters.';
+  }
+  return errors;
+}
+
+function validateLoginForm(email, password) {
+  const errors = {};
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    errors['a-email'] = 'Enter a valid email address.';
+  }
+  if (!password || password.trim() === '') {
+    errors['a-password'] = 'Password is required.';
+  }
+  return errors;
+}
+
+async function registerUser(name, email, password) {
+  const users = readUsers();
+  const cleanEmail = email.trim().toLowerCase();
+  
+  if (users.some((u) => u.email === cleanEmail)) {
+    throw new Error('An account with this email already exists.');
+  }
+  
+  const salt = generateId();
+  const hashedPassword = await hashPassword(password, salt);
+  const newUser = {
+    id: 'u_' + generateId(),
+    name: name.trim(),
+    email: cleanEmail,
+    salt,
+    hash: hashedPassword,
+    createdAt: Date.now()
+  };
+
+  users.push(newUser);
+  if (!writeStorage(AUTH_KEYS.users, users)) {
+    throw new Error('Could not save your account.');
+  }
+  return newUser;
+}
+
+async function loginUser(email, password) {
+  const users = readUsers();
+  const cleanEmail = email.trim().toLowerCase();
+  const user = users.find((u) => u.email === cleanEmail);
+
+  if (!user) {
+    throw new Error('No account found. Please sign up first.');
+  }
+
+  const hashedPassword = await hashPassword(password, user.salt);
+  if (hashedPassword !== user.hash) {
+    throw new Error('Incorrect email or password.');
+  }
+
+  writeStorage(AUTH_KEYS.session, { userId: user.id });
+  return { id: user.id, name: user.name, email: user.email };
+}
+
+function logoutUser() {
+  try {
+    localStorage.removeItem(AUTH_KEYS.session);
+  } catch (e) {
+    // ignore
+  }
+}
+
 function isValidQuestion(q) {
   return q && typeof q === 'object' && typeof q.id === 'string' && typeof q.title === 'string' && q.title.trim() !== '' &&
     CATEGORIES.includes(q.category) && DIFFICULTIES.includes(q.difficulty) && STATUSES.includes(q.status);
@@ -114,7 +217,7 @@ function resetStateToDefaults() {
   state.machine = { status: 'Not Started', notes: '', updatedAt: null };
   state.filters = { category: 'All', difficulty: 'All', status: 'All' };
   state.query = ''; state.editingId = null; state.confirmAction = null;
-  $('searchInput').value = '';
+  if ($('searchInput')) $('searchInput').value = '';
 }
 
 function loadState() {
@@ -460,114 +563,68 @@ function updateTarget(value) {
   renderAll();
 }
 
-/* ---------- Auth service (mock, localStorage) ---------- */
-const AUTH_KEYS = { users: 'ipt_users', session: 'ipt_session' };
-
-async function hashPassword(password, salt) {
-  if (!window.crypto || !crypto.subtle) return btoa(unescape(encodeURIComponent(salt + password)));
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salt + password));
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-// Moves data saved before auth existed into the first account created
-function migrateLegacyData(userId) {
-  ['questions', 'settings', 'machine'].forEach((name) => {
-    try {
-      const key = STORAGE_KEYS[name];
-      const value = localStorage.getItem(key);
-      if (value !== null) { localStorage.setItem(key + '_' + userId, value); localStorage.removeItem(key); }
-    } catch (error) { /* ignore */ }
-  });
-}
-
-const MockAuth = {
-  listeners: [],
-  readUsers() {
-    const users = readStorage(AUTH_KEYS.users, []);
-    return Array.isArray(users) ? users.filter((u) => u && u.id && u.email && u.hash && u.salt) : [];
-  },
-  currentUser() {
-    const session = readStorage(AUTH_KEYS.session, null);
-    const user = session && this.readUsers().find((u) => u.id === session.userId);
-    return user ? { id: user.id, name: user.name, email: user.email } : null;
-  },
-  notify() { const user = this.currentUser(); this.listeners.forEach((cb) => cb(user)); },
-  onAuthChange(callback) {
-    this.listeners.push(callback);
-    callback(this.currentUser());
-    // keeps other tabs in sync when someone logs in or out
-    window.addEventListener('storage', (e) => { if (e.key === AUTH_KEYS.session) callback(this.currentUser()); });
-  },
-  async signup({ name, email, password }) {
-    const users = this.readUsers();
-    const cleanEmail = email.trim().toLowerCase();
-    if (users.some((u) => u.email === cleanEmail)) throw new Error('An account with this email already exists.');
-    const salt = generateId();
-    const user = { id: 'u_' + generateId(), name: name.trim(), email: cleanEmail, salt, hash: await hashPassword(password, salt), createdAt: Date.now() };
-    if (!users.length) migrateLegacyData(user.id);
-    users.push(user);
-    if (!writeStorage(AUTH_KEYS.users, users)) throw new Error('Could not save your account.');
-    writeStorage(AUTH_KEYS.session, { userId: user.id });
-    this.notify();
-  },
-  async login({ email, password }) {
-    const user = this.readUsers().find((u) => u.email === email.trim().toLowerCase());
-    if (!user || (await hashPassword(password, user.salt)) !== user.hash) throw new Error('Invalid email or password.');
-    writeStorage(AUTH_KEYS.session, { userId: user.id });
-    this.notify();
-  },
-  async logout() {
-    try { localStorage.removeItem(AUTH_KEYS.session); } catch (error) { /* ignore */ }
-    this.notify();
-  }
-};
-
-const AuthService = MockAuth; // swap this line for FirebaseAuth later
-
-/* ---------- Auth UI and session ---------- */
+/* ---------- Auth UI and session management ---------- */
 function clearAuthErrors() {
-  ['a-name', 'a-email', 'a-password'].forEach((id) => { $('err-' + id).textContent = ''; $(id).setAttribute('aria-invalid', 'false'); });
-  $('authError').textContent = '';
+  ['a-name', 'a-email', 'a-password'].forEach((id) => {
+    if ($('err-' + id)) $('err-' + id).textContent = '';
+    if ($(id)) $(id).setAttribute('aria-invalid', 'false');
+  });
+  if ($('authError')) $('authError').textContent = '';
 }
+
 function setAuthMode(mode) {
   state.authMode = mode;
   const signup = mode === 'signup';
-  $('tabLogin').classList.toggle('active', !signup);
-  $('tabSignup').classList.toggle('active', signup);
-  $('nameField').hidden = !signup;
-  $('authSubmit').textContent = signup ? 'Create account' : 'Log in';
-  $('a-password').autocomplete = signup ? 'new-password' : 'current-password';
+  if ($('tabLogin')) $('tabLogin').classList.toggle('active', !signup);
+  if ($('tabSignup')) $('tabSignup').classList.toggle('active', signup);
+  if ($('nameField')) $('nameField').hidden = !signup;
+  if ($('authSubmit')) $('authSubmit').textContent = signup ? 'Create account' : 'Log in';
+  if ($('a-password')) $('a-password').autocomplete = signup ? 'new-password' : 'current-password';
   clearAuthErrors();
-}
-function validateAuth(mode, data) {
-  const errors = {};
-  if (mode === 'signup' && data.name.trim().length < 2) errors['a-name'] = 'Please enter your name.';
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(data.email.trim())) errors['a-email'] = 'Enter a valid email address.';
-  if (mode === 'signup' && data.password.length < 8) errors['a-password'] = 'Password must be at least 8 characters.';
-  if (mode === 'login' && !data.password) errors['a-password'] = 'Password is required.';
-  return errors;
 }
 
 async function handleAuthSubmit(event) {
   event.preventDefault();
   clearAuthErrors();
   const mode = state.authMode;
-  const data = { name: $('a-name').value, email: $('a-email').value, password: $('a-password').value };
-  const errors = validateAuth(mode, data);
-  Object.keys(errors).forEach((id) => { $('err-' + id).textContent = errors[id]; $(id).setAttribute('aria-invalid', 'true'); });
+  const nameInput = $('a-name') ? $('a-name').value : '';
+  const emailInput = $('a-email') ? $('a-email').value : '';
+  const passwordInput = $('a-password') ? $('a-password').value : '';
+
+  const errors = mode === 'signup' 
+    ? validateSignupForm(nameInput, emailInput, passwordInput) 
+    : validateLoginForm(emailInput, passwordInput);
+
+  Object.keys(errors).forEach((id) => {
+    if ($('err-' + id)) $('err-' + id).textContent = errors[id];
+    if ($(id)) $(id).setAttribute('aria-invalid', 'true');
+  });
+
   if (Object.keys(errors).length) return;
-  $('authSubmit').disabled = true;
+
+  if ($('authSubmit')) $('authSubmit').disabled = true;
+
   try {
-    if (mode === 'signup') { await AuthService.signup(data); showToast('Account created. Welcome!'); }
-    else await AuthService.login(data);
+    if (mode === 'signup') {
+      await registerUser(nameInput, emailInput, passwordInput);
+      showToast('Account created successfully! Please log in.');
+      if ($('authForm')) $('authForm').reset();
+      setAuthMode('login');
+    } else {
+      const user = await loginUser(emailInput, passwordInput);
+      startSession(user);
+      showToast('Welcome back!');
+    }
   } catch (error) {
-    $('authError').textContent = error.message || 'Something went wrong. Please try again.';
+    if ($('authError')) $('authError').textContent = error.message || 'Authentication failed. Please try again.';
   } finally {
-    $('authSubmit').disabled = false;
+    if ($('authSubmit')) $('authSubmit').disabled = false;
   }
 }
-async function handleLogout() {
-  await AuthService.logout();
+
+function handleLogout() {
+  logoutUser();
+  endSession();
   showToast('You have been logged out');
 }
 
@@ -576,19 +633,17 @@ function renderUser() {
   if (!user) return;
   const display = user.name || user.email.split('@')[0];
   const initial = display.trim().charAt(0).toUpperCase() || '?';
-  $('userAvatar').textContent = initial;
-  $('topAvatar').textContent = initial;
-  $('userName').textContent = display;
-  $('userEmail').textContent = user.email;
-  $('settingsEmail').textContent = user.email;
+  if ($('userAvatar')) $('userAvatar').textContent = initial;
+  if ($('topAvatar')) $('topAvatar').textContent = initial;
+  if ($('userName')) $('userName').textContent = display;
+  if ($('userEmail')) $('userEmail').textContent = user.email;
+  if ($('settingsEmail')) $('settingsEmail').textContent = user.email;
 }
 
-// Called by AuthService whenever the signed-in user changes
 function startSession(user) {
-  if (state.user && state.user.id === user.id) return;
   state.user = user;
-  loadState();                       // loads THIS user's data only
-  $('authForm').reset();
+  loadState();
+  if ($('authForm')) $('authForm').reset();
   clearAuthErrors();
   applyTheme();
   renderGreeting();
@@ -597,11 +652,12 @@ function startSession(user) {
   showPage('dashboard');
   renderAll();
 }
+
 function endSession() {
   state.user = null;
-  resetStateToDefaults();            // clears in-memory data of the previous user
-  $('formModal').close();
-  $('confirmModal').close();
+  resetStateToDefaults();
+  if ($('formModal') && typeof $('formModal').close === 'function') $('formModal').close();
+  if ($('confirmModal') && typeof $('confirmModal').close === 'function') $('confirmModal').close();
   closeSidebar();
   document.body.classList.remove('authed');
   setAuthMode('login');
@@ -610,35 +666,40 @@ function endSession() {
 
 /* ---------- Event listeners ---------- */
 function setupAuthEvents() {
-  $('authForm').addEventListener('submit', handleAuthSubmit);
-  $('tabLogin').addEventListener('click', () => setAuthMode('login'));
-  $('tabSignup').addEventListener('click', () => setAuthMode('signup'));
-  $('logoutBtn').addEventListener('click', handleLogout);
-  $('logoutBtn2').addEventListener('click', handleLogout);
+  if ($('authForm')) $('authForm').addEventListener('submit', handleAuthSubmit);
+  if ($('tabLogin')) $('tabLogin').addEventListener('click', () => setAuthMode('login'));
+  if ($('tabSignup')) $('tabSignup').addEventListener('click', () => setAuthMode('signup'));
+  if ($('logoutBtn')) $('logoutBtn').addEventListener('click', handleLogout);
+  if ($('logoutBtn2')) $('logoutBtn2').addEventListener('click', handleLogout);
 }
+
 function setupEvents() {
-  $('menuBtn').addEventListener('click', openSidebar);
-  $('closeMenuBtn').addEventListener('click', closeSidebar);
-  $('overlay').addEventListener('click', closeSidebar);
-  $('themeBtn').addEventListener('click', toggleTheme);
-  $('themeBtn2').addEventListener('click', toggleTheme);
+  if ($('menuBtn')) $('menuBtn').addEventListener('click', openSidebar);
+  if ($('closeMenuBtn')) $('closeMenuBtn').addEventListener('click', closeSidebar);
+  if ($('overlay')) $('overlay').addEventListener('click', closeSidebar);
+  if ($('themeBtn')) $('themeBtn').addEventListener('click', toggleTheme);
+  if ($('themeBtn2')) $('themeBtn2').addEventListener('click', toggleTheme);
 
   document.querySelectorAll('.nav-link').forEach((btn) => btn.addEventListener('click', () => showPage(btn.dataset.page)));
 
-  $('searchInput').addEventListener('input', (e) => {
-    state.query = e.target.value;
-    if (state.query && state.page !== 'questions') showPage('questions');
-    renderQuestions();
-  });
-  $('clearSearchBtn').addEventListener('click', () => {
-    state.query = '';
-    $('searchInput').value = '';
-    renderQuestions();
-  });
+  if ($('searchInput')) {
+    $('searchInput').addEventListener('input', (e) => {
+      state.query = e.target.value;
+      if (state.query && state.page !== 'questions') showPage('questions');
+      renderQuestions();
+    });
+  }
+  if ($('clearSearchBtn')) {
+    $('clearSearchBtn').addEventListener('click', () => {
+      state.query = '';
+      if ($('searchInput')) $('searchInput').value = '';
+      renderQuestions();
+    });
+  }
 
-  $('filterCategory').addEventListener('change', (e) => { state.filters.category = e.target.value; renderQuestions(); });
-  $('filterDifficulty').addEventListener('change', (e) => { state.filters.difficulty = e.target.value; renderQuestions(); });
-  $('filterStatus').addEventListener('change', (e) => { state.filters.status = e.target.value; renderQuestions(); });
+  if ($('filterCategory')) $('filterCategory').addEventListener('change', (e) => { state.filters.category = e.target.value; renderQuestions(); });
+  if ($('filterDifficulty')) $('filterDifficulty').addEventListener('change', (e) => { state.filters.difficulty = e.target.value; renderQuestions(); });
+  if ($('filterStatus')) $('filterStatus').addEventListener('change', (e) => { state.filters.status = e.target.value; renderQuestions(); });
 
   document.addEventListener('click', (e) => {
     const target = e.target.closest('[data-action]');
@@ -660,53 +721,73 @@ function setupEvents() {
     }
   });
 
-  $('machineSeg').addEventListener('click', (e) => {
-    const button = e.target.closest('[data-machine]');
-    if (button) setMachineStatus(button.dataset.machine);
-  });
-  $('saveMachineNotes').addEventListener('click', () => {
-    state.machine.notes = $('machineNotes').value;
-    state.machine.updatedAt = Date.now();
-    saveMachine();
-    renderAll();
-    showToast('Notes saved');
-  });
+  if ($('machineSeg')) {
+    $('machineSeg').addEventListener('click', (e) => {
+      const button = e.target.closest('[data-machine]');
+      if (button) setMachineStatus(button.dataset.machine);
+    });
+  }
+  if ($('saveMachineNotes')) {
+    $('saveMachineNotes').addEventListener('click', () => {
+      if ($('machineNotes')) state.machine.notes = $('machineNotes').value;
+      state.machine.updatedAt = Date.now();
+      saveMachine();
+      renderAll();
+      showToast('Notes saved');
+    });
+  }
 
-  $('questionForm').addEventListener('submit', handleFormSubmit);
-  $('formCancelBtn').addEventListener('click', () => $('formModal').close());
-  $('formCloseBtn').addEventListener('click', () => $('formModal').close());
-  $('confirmCancel').addEventListener('click', () => $('confirmModal').close());
-  $('confirmOk').addEventListener('click', () => {
-    const action = state.confirmAction;
-    state.confirmAction = null;
-    $('confirmModal').close();
-    if (action) action();
-  });
+  if ($('questionForm')) $('questionForm').addEventListener('submit', handleFormSubmit);
+  if ($('formCancelBtn')) $('formCancelBtn').addEventListener('click', () => $('formModal').close());
+  if ($('formCloseBtn')) $('formCloseBtn').addEventListener('click', () => $('formModal').close());
+  if ($('confirmCancel')) $('confirmCancel').addEventListener('click', () => $('confirmModal').close());
+  if ($('confirmOk')) {
+    $('confirmOk').addEventListener('click', () => {
+      const action = state.confirmAction;
+      state.confirmAction = null;
+      $('confirmModal').close();
+      if (action) action();
+    });
+  }
   ['formModal', 'confirmModal'].forEach((id) => {
-    $(id).addEventListener('click', (e) => { if (e.target === $(id)) $(id).close(); });
+    if ($(id)) {
+      $(id).addEventListener('click', (e) => { if (e.target === $(id)) $(id).close(); });
+    }
   });
 
-  $('targetInput').addEventListener('change', (e) => updateTarget(e.target.value));
-  $('loadDemoBtn').addEventListener('click', loadDemoData);
-  $('resetDataBtn').addEventListener('click', () => {
-    askConfirmation('Reset all data?', 'This clears all questions, goals and machine coding notes. This can’t be undone.', 'Reset everything', resetAllData);
-  });
+  if ($('targetInput')) $('targetInput').addEventListener('change', (e) => updateTarget(e.target.value));
+  if ($('loadDemoBtn')) $('loadDemoBtn').addEventListener('click', loadDemoData);
+  if ($('resetDataBtn')) {
+    $('resetDataBtn').addEventListener('click', () => {
+      askConfirmation('Reset all data?', 'This clears all questions, goals and machine coding notes. This can’t be undone.', 'Reset everything', resetAllData);
+    });
+  }
 }
 
 /* ---------- Init ---------- */
 function init() {
   hydrateIcons();
-  fillSelect($('f-category'), CATEGORIES, 'Select…');
-  fillSelect($('f-difficulty'), DIFFICULTIES, 'Select…');
-  fillSelect($('f-status'), STATUSES, 'Select…');
-  fillSelect($('filterCategory'), CATEGORIES, 'Category: All');
-  fillSelect($('filterDifficulty'), DIFFICULTIES, 'Difficulty: All');
-  fillSelect($('filterStatus'), STATUSES, 'Status: All');
-  ['filterCategory', 'filterDifficulty', 'filterStatus'].forEach((id) => { $(id).options[0].value = 'All'; });
+  if ($('f-category')) fillSelect($('f-category'), CATEGORIES, 'Select…');
+  if ($('f-difficulty')) fillSelect($('f-difficulty'), DIFFICULTIES, 'Select…');
+  if ($('f-status')) fillSelect($('f-status'), STATUSES, 'Select…');
+  if ($('filterCategory')) fillSelect($('filterCategory'), CATEGORIES, 'Category: All');
+  if ($('filterDifficulty')) fillSelect($('filterDifficulty'), DIFFICULTIES, 'Difficulty: All');
+  if ($('filterStatus')) fillSelect($('filterStatus'), STATUSES, 'Status: All');
+  ['filterCategory', 'filterDifficulty', 'filterStatus'].forEach((id) => { if ($(id) && $(id).options[0]) $(id).options[0].value = 'All'; });
+  
   state.settings.theme = readStorage('ipt_last_theme', 'light') === 'dark' ? 'dark' : 'light';
   applyTheme();
   setupEvents();
   setupAuthEvents();
   setAuthMode('login');
-  AuthService.onAuthChange((user) => (user ? startSession(user) : endSession()));
+
+  // Session verification and restoration on page load
+  const activeUser = getCurrentUser();
+  if (activeUser) {
+    startSession(activeUser);
+  } else {
+    endSession();
+  }
 }
+
+init();
