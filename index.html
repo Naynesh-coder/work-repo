@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>InterviewPrep Pro</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="overlay" id="overlay"></div>
+
+  <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+    <div class="brand">
+      <span class="logo" data-icon="layers"></span>
+      <strong>InterviewPrep Pro</strong>
+      <button class="icon-btn close-btn" id="closeMenuBtn" aria-label="Close menu" data-icon="x"></button>
+    </div>
+    <nav class="nav" aria-label="Main">
+      <button class="nav-link active" data-page="dashboard"><span data-icon="dash"></span>Dashboard</button>
+      <button class="nav-link" data-page="questions"><span data-icon="list"></span>Question Tracker</button>
+      <button class="nav-link" data-page="progress"><span data-icon="chart"></span>Weekly Progress</button>
+      <button class="nav-link" data-page="settings"><span data-icon="gear"></span>Settings</button>
+    </nav>
+    <div class="profile">
+      <div class="avatar">S</div>
+      <div><p>Student</p><small>Interview prep</small></div>
+    </div>
+  </aside>
+
+  <div class="content">
+    <header class="topbar">
+      <button class="icon-btn menu-btn" id="menuBtn" aria-label="Open menu" data-icon="menu"></button>
+      <h1 id="pageTitle">Dashboard</h1>
+      <div class="search">
+        <span data-icon="search" data-size="16"></span>
+        <input id="searchInput" type="search" placeholder="Search questions…" aria-label="Search questions" autocomplete="off">
+        <button class="icon-btn small" id="clearSearchBtn" aria-label="Clear search" data-icon="x" data-size="16" hidden></button>
+      </div>
+      <button class="icon-btn" id="themeBtn" aria-label="Toggle dark mode"></button>
+    </header>
+
+    <main>
+      <!-- Dashboard -->
+      <section class="page active" id="page-dashboard">
+        <div class="intro">
+          <h2 id="greeting"></h2>
+          <p class="muted">Here’s how your preparation is going.</p>
+        </div>
+
+        <div class="stats">
+          <article class="card stat">
+            <div class="stat-head"><span>Total Questions</span><span class="stat-icon tone-indigo" data-icon="book"></span></div>
+            <strong class="stat-value" id="statTotal">0</strong><small>Saved in your tracker</small>
+          </article>
+          <article class="card stat">
+            <div class="stat-head"><span>DSA Completed</span><span class="stat-icon tone-violet" data-icon="code"></span></div>
+            <strong class="stat-value" id="statDsa">0</strong><small>Solved DSA problems</small>
+          </article>
+          <article class="card stat">
+            <div class="stat-head"><span>Interview Qs Completed</span><span class="stat-icon tone-green" data-icon="check"></span></div>
+            <strong class="stat-value" id="statTech">0</strong><small>Git and Technical questions</small>
+          </article>
+          <article class="card stat">
+            <div class="stat-head"><span>Machine Coding</span><span class="stat-icon tone-amber" data-icon="cpu"></span></div>
+            <strong class="stat-value small-text" id="statMachine">Not Started</strong><small id="statMachineSub">Not updated yet</small>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="card pad">
+            <h2 class="card-title">Overall progress</h2>
+            <div id="overallEmpty" class="empty compact" hidden>
+              <p class="muted">No questions yet. Add one to start tracking.</p>
+              <button class="btn primary" data-action="add">Add Your First Question</button>
+            </div>
+            <div id="overallBody">
+              <div class="progress-row"><strong class="big" id="overallPercent">0%</strong><span class="muted" id="overallText">0 of 0 completed</span></div>
+              <div class="bar-track"><div class="bar-fill" id="overallBar"></div></div>
+              <div class="mini-stats">
+                <div><small>Weekly goal</small><strong id="dashGoal">0</strong></div>
+                <div><small>Done this week</small><strong id="dashWeek">0</strong></div>
+                <div><small>Remaining</small><strong id="dashLeft">0</strong></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card pad">
+            <div class="row-between"><h2 class="card-title">Machine coding</h2><span class="badge" id="machineBadge"></span></div>
+            <div class="segmented" id="machineSeg" role="group" aria-label="Machine coding status"></div>
+            <label for="machineNotes" class="label">Notes</label>
+            <textarea id="machineNotes" rows="3" placeholder="e.g. Building a Todo app with drag and drop…"></textarea>
+            <div class="row-between">
+              <small class="muted" id="machineUpdated">Last updated: —</small>
+              <button class="btn secondary" id="saveMachineNotes">Save notes</button>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid-2">
+          <article class="card pad">
+            <h2 class="card-title">This week’s activity</h2>
+            <div class="chart" id="activityChart"></div>
+          </article>
+          <article class="card pad">
+            <div class="row-between"><h2 class="card-title">Recent questions</h2><button class="link-btn" data-page="questions" data-action="go">View all</button></div>
+            <ul class="recent" id="recentList"></ul>
+          </article>
+        </div>
+      </section>
+
+      <!-- Question Tracker -->
+      <section class="page" id="page-questions">
+        <article class="card">
+          <div class="toolbar">
+            <div class="row-between wrap">
+              <h2 class="card-title">All questions</h2>
+              <button class="btn primary" data-action="add"><span data-icon="plus" data-size="16"></span>Add Question</button>
+            </div>
+            <div class="filters" id="filtersBar">
+              <select id="filterCategory" aria-label="Filter by category"></select>
+              <select id="filterDifficulty" aria-label="Filter by difficulty"></select>
+              <select id="filterStatus" aria-label="Filter by status"></select>
+              <button class="btn secondary" data-action="reset-filters">Reset Filters</button>
+              <small class="muted" id="resultCount"></small>
+            </div>
+          </div>
+          <div id="emptyState" class="empty" hidden></div>
+          <div class="table-wrap" id="tableWrap">
+            <table>
+              <thead><tr><th>Question</th><th>Category</th><th>Difficulty</th><th>Status</th><th>Added</th><th><span class="sr-only">Actions</span></th></tr></thead>
+              <tbody id="questionBody"></tbody>
+            </table>
+          </div>
+          <div class="card-list" id="cardList"></div>
+        </article>
+      </section>
+
+      <!-- Weekly Progress -->
+      <section class="page" id="page-progress">
+        <div class="grid-2">
+          <article class="card pad">
+            <div class="row-between"><h2 class="card-title">Weekly goal</h2><span class="muted" id="goalTargetLabel"></span></div>
+            <div class="progress-row"><strong class="big" id="goalPercent">0%</strong><span class="muted" id="goalText"></span></div>
+            <div class="bar-track"><div class="bar-fill" id="goalBar"></div></div>
+            <p class="muted msg" id="goalMessage"></p>
+          </article>
+          <article class="card pad">
+            <h2 class="card-title">Category progress</h2>
+            <div id="categoryProgress"></div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Settings -->
+      <section class="page" id="page-settings">
+        <article class="card pad narrow">
+          <h2 class="card-title">Preferences</h2>
+          <label for="targetInput" class="label">Weekly question target</label>
+          <input id="targetInput" type="number" min="1" max="200">
+          <div class="row-between space-top"><span>Dark mode</span><button class="icon-btn" id="themeBtn2" aria-label="Toggle dark mode"></button></div>
+        </article>
+        <article class="card pad narrow">
+          <h2 class="card-title">Data</h2>
+          <p class="muted">Demo data is optional and is added on top of your existing questions.</p>
+          <div class="actions">
+            <button class="btn secondary" id="loadDemoBtn">Load demo data</button>
+            <button class="btn danger" id="resetDataBtn">Reset all data</button>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <!-- Add / Edit modal -->
+  <dialog id="formModal" aria-labelledby="formTitle">
+    <form id="questionForm" novalidate>
+      <div class="modal-head"><h2 id="formTitle">Add question</h2><button type="button" class="icon-btn" id="formCloseBtn" aria-label="Close" data-icon="x"></button></div>
+      <div class="modal-body">
+        <label for="f-title" class="label">Question title <span class="req">*</span></label>
+        <input id="f-title" type="text" placeholder="e.g. Reverse a linked list">
+        <p class="error" id="err-title"></p>
+        <div class="two-col">
+          <div>
+            <label for="f-category" class="label">Category <span class="req">*</span></label>
+            <select id="f-category"></select><p class="error" id="err-category"></p>
+          </div>
+          <div>
+            <label for="f-difficulty" class="label">Difficulty <span class="req">*</span></label>
+            <select id="f-difficulty"></select><p class="error" id="err-difficulty"></p>
+          </div>
+        </div>
+        <label for="f-status" class="label">Status <span class="req">*</span></label>
+        <select id="f-status"></select><p class="error" id="err-status"></p>
+        <label for="f-notes" class="label">Topic or notes</label>
+        <textarea id="f-notes" rows="3" placeholder="Optional"></textarea>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn secondary" id="formCancelBtn">Cancel</button>
+        <button type="submit" class="btn primary" id="formSubmitBtn">Add question</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Confirmation modal -->
+  <dialog id="confirmModal" aria-labelledby="confirmTitle">
+    <div class="modal-head"><h2 id="confirmTitle"></h2></div>
+    <div class="modal-body"><p class="muted" id="confirmText"></p></div>
+    <div class="modal-foot">
+      <button class="btn secondary" id="confirmCancel">Cancel</button>
+      <button class="btn danger" id="confirmOk">Delete</button>
+    </div>
+  </dialog>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+  <script src="script.js"></script>
+</body>
+</html>
